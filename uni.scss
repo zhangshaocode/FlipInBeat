@@ -1,0 +1,49 @@
+$uni-color-primary: #667eea;
+$uni-color-primary-dark: #764ba2;
+$uni-color-success: #22c55e;
+$uni-color-warning: #f59e0b;
+$uni-color-error: #ef4444;
+
+$uni-text-color: #1a1a2e;
+$uni-text-color-inverse: #ffffff;
+$uni-text-color-grey: #888888;
+$uni-text-color-placeholder: #a0aec0;
+$uni-text-color-disable: #cbd5e0;
+
+$uni-bg-color: #ffffff;
+$uni-bg-color-grey: #f5f7fa;
+$uni-bg-color-hover: #edf2f7;
+$uni-bg-color-mask: rgba(0, 0, 0, 0.3);
+
+$uni-border-color: #e2e8f0;
+
+$uni-font-size-sm: 12px;
+$uni-font-size-base: 14px;
+$uni-font-size-lg: 16px;
+
+$uni-img-size-sm: 20px;
+$uni-img-size-base: 26px;
+$uni-img-size-lg: 40px;
+
+$uni-border-radius-sm: 8px;
+$uni-border-radius-base: 16px;
+$uni-border-radius-lg: 24px;
+$uni-border-radius-circle: 50%;
+
+$uni-spacing-row-sm: 8px;
+$uni-spacing-row-base: 16px;
+$uni-spacing-row-lg: 24px;
+
+$uni-spacing-col-sm: 8px;
+$uni-spacing-col-base: 16px;
+$uni-spacing-col-lg: 24px;
+
+$uni-opacity-disabled: 0.4;
+
+$uni-gradient-primary: linear-gradient(135deg, #667eea, #764ba2);
+$uni-gradient-bg: linear-gradient(180deg, #fafaff 0%, #f0f2f8 50%, #e8ecf6 100%);
+
+$uni-shadow-sm: 0 4rpx 12rpx rgba(0, 0, 0, 0.06);
+$uni-shadow-base: 0 8rpx 24rpx rgba(0, 0, 0, 0.08);
+$uni-shadow-lg: 0 16rpx 48rpx rgba(0, 0, 0, 0.1);
+$uni-shadow-primary: 0 8rpx 24rpx rgba(102, 126, 234, 0.35);

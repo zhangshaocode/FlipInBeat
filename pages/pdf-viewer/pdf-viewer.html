@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PDF Viewer</title>
+    <script src="pdf.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #fff;
+        }
+        #pdf-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #canvas-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .page {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            overflow: hidden;
+            backface-visibility: hidden;
+            transform-style: preserve-3d;
+        }
+        .page canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .page-left {
+            left: 0;
+            transform-origin: right center;
+            z-index: 2;
+        }
+        .page-right {
+            right: 0;
+            z-index: 1;
+        }
+        .flip-page {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform-style: preserve-3d;
+            z-index: 10;
+        }
+        .flip-page-front, .flip-page-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .flip-page-back {
+            transform: rotateY(180deg);
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #667eea;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .empty-page {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            color: #ccc;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div id="pdf-container">
+        <div id="canvas-wrapper">
+            <div class="page page-left" id="pageLeft">
+                <canvas id="canvasLeft"></canvas>
+                <div class="empty-page" id="emptyLeft">封面</div>
+            </div>
+            <div class="page page-right" id="pageRight">
+                <canvas id="canvasRight"></canvas>
+                <div class="empty-page" id="emptyRight">结束</div>
+            </div>
+            <div class="flip-page" id="flipPage" style="display: none;">
+                <div class="flip-page-front">
+                    <canvas id="canvasFlip"></canvas>
+                </div>
+                <div class="flip-page-back">
+                    <canvas id="canvasFlipBack"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+        if (pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        let pdfDoc = null;
+        let currentPage = 0;
+        let totalPages = 0;
+        let isFlipping = false;
+        let renderTasks = {};
+        
+        const canvasLeft = document.getElementById('canvasLeft');
+        const canvasRight = document.getElementById('canvasRight');
+        const canvasFlip = document.getElementById('canvasFlip');
+        const canvasFlipBack = document.getElementById('canvasFlipBack');
+        const ctxLeft = canvasLeft.getContext('2d');
+        const ctxRight = canvasRight.getContext('2d');
+        const ctxFlip = canvasFlip.getContext('2d');
+        const ctxFlipBack = canvasFlipBack.getContext('2d');
+        
+        const pageLeft = document.getElementById('pageLeft');
+        const pageRight = document.getElementById('pageRight');
+        const flipPage = document.getElementById('flipPage');
+        const emptyLeft = document.getElementById('emptyLeft');
+        const emptyRight = document.getElementById('emptyRight');
+
+        function getPDFData() {
+            const hash = window.location.hash;
+            if (hash && hash.startsWith('#pdf=')) {
+                return decodeURIComponent(hash.substring(5));
+            }
+            try {
+                const stored = plus.storage.getItem('_flipinbeat_pdf_data')
+                if (stored) return stored
+            } catch(e) {}
+            try {
+                return window.localStorage.getItem('_flipinbeat_pdf_data')
+            } catch(e) {}
+            return null
+        }
+        
+        function init() {
+            const base64Data = getPDFData()
+            if (base64Data) {
+                loadPDF(base64Data);
+            } else {
+                document.getElementById('pdf-container').innerHTML = '<div class="loading">请导入PDF文件</div>';
+            }
+            
+            initTouch();
+        }
+
+        async function loadPDF(base64Data) {
+            try {
+                const parts = base64Data.split(',')
+                const rawBase64 = parts.length > 1 ? parts[1] : base64Data
+                const pdfData = atob(rawBase64);
+                const pdfArray = new Uint8Array(pdfData.length);
+                for (let i = 0; i < pdfData.length; i++) {
+                    pdfArray[i] = pdfData.charCodeAt(i);
+                }
+                
+                pdfDoc = await pdfjsLib.getDocument({ 
+                    data: pdfArray, 
+                    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/', 
+                    cMapPacked: true,
+                    disableWorker: true
+                }).promise;
+                
+                totalPages = pdfDoc.numPages;
+                currentPage = 0;
+                updatePageInfo();
+                renderPage(currentPage, ctxRight, canvasRight);
+            } catch (error) {
+                console.error('PDF加载失败:', error);
+                document.getElementById('pdf-container').innerHTML = '<div class="loading">PDF加载失败，请重试</div>';
+            }
+        }
+
+        async function renderPage(pageNum, ctx, canvas) {
+            if (!pdfDoc || pageNum < 0 || pageNum >= totalPages) return;
+            
+            const canvasId = canvas.id;
+            
+            if (renderTasks[canvasId]) {
+                renderTasks[canvasId].cancel();
+            }
+            
+            try {
+                const page = await pdfDoc.getPage(pageNum + 1);
+                
+                const container = document.getElementById('canvas-wrapper');
+                const containerWidth = container.clientWidth || window.innerWidth;
+                const containerHeight = container.clientHeight || window.innerHeight;
+                
+                const originalViewport = page.getViewport({ scale: 1 });
+                const pageWidth = originalViewport.width;
+                const pageHeight = originalViewport.height;
+                
+                const widthScale = containerWidth / pageWidth;
+                const heightScale = containerHeight / pageHeight;
+                const scale = Math.min(widthScale, heightScale);
+                
+                const dpr = window.devicePixelRatio || 2;
+                const viewport = page.getViewport({ scale: scale * dpr });
+                
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.width = (viewport.width / dpr) + 'px';
+                canvas.style.height = (viewport.height / dpr) + 'px';
+                
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+                
+                const renderTask = page.render(renderContext);
+                renderTasks[canvasId] = renderTask;
+                
+                await renderTask.promise;
+                delete renderTasks[canvasId];
+            } catch (error) {
+                delete renderTasks[canvasId];
+                if (error.name !== 'RenderingCancelledException') {
+                    console.error('PDF渲染失败:', error);
+                }
+            }
+        }
+
+        function updatePageInfo() {
+            if (window.parent) {
+                try {
+                    window.parent.postMessage({
+                        currentPage: currentPage,
+                        totalPages: totalPages
+                    }, '*');
+                } catch (e) {
+                    console.log('postMessage error:', e);
+                }
+            }
+        }
+
+        function initTouch() {
+            let startX = 0;
+            let startY = 0;
+
+            document.addEventListener('touchstart', (e) => {
+                if (isFlipping) return;
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            }, { passive: true });
+
+            document.addEventListener('touchend', (e) => {
+                if (isFlipping) return;
+                
+                const deltaX = e.changedTouches[0].clientX - startX;
+                const deltaY = e.changedTouches[0].clientY - startY;
+                
+                if (Math.abs(deltaX) > 50 && Math.abs(deltaX) > Math.abs(deltaY)) {
+                    if (deltaX < 0) {
+                        flipToNext();
+                    } else {
+                        flipToPrev();
+                    }
+                }
+            }, { passive: true });
+        }
+
+        async function flipToNext() {
+            if (currentPage >= totalPages - 1 || isFlipping) return;
+            
+            isFlipping = true;
+            flipPage.style.display = 'block';
+            
+            await renderPage(currentPage, ctxFlip, canvasFlip);
+            
+            if (currentPage + 1 < totalPages) {
+                await renderPage(currentPage + 1, ctxFlipBack, canvasFlipBack);
+            }
+            
+            let progress = 0;
+            const startTime = performance.now();
+            const duration = 500;
+
+            function animate(currentTime) {
+                progress = Math.min((currentTime - startTime) / duration, 1);
+                
+                const rotateY = -180 * progress;
+                const translateX = -progress * 100;
+                
+                flipPage.style.transform = `rotateY(${rotateY}deg) translateX(${translateX}%)`;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    currentPage++;
+                    updatePageInfo();
+                    
+                    if (currentPage > 0) {
+                        emptyLeft.style.display = 'none';
+                        renderPage(currentPage - 1, ctxLeft, canvasLeft);
+                    }
+                    
+                    renderPage(currentPage, ctxRight, canvasRight);
+                    emptyRight.style.display = 'none';
+                    
+                    flipPage.style.display = 'none';
+                    isFlipping = false;
+                }
+            }
+            
+            requestAnimationFrame(animate);
+        }
+
+        async function flipToPrev() {
+            if (currentPage <= 0 || isFlipping) return;
+            
+            isFlipping = true;
+            flipPage.style.display = 'block';
+            
+            await renderPage(currentPage, ctxFlip, canvasFlip);
+            
+            if (currentPage > 0) {
+                await renderPage(currentPage - 1, ctxFlipBack, canvasFlipBack);
+            }
+            
+            let progress = 0;
+            const startTime = performance.now();
+            const duration = 500;
+
+            function animate(currentTime) {
+                progress = Math.min((currentTime - startTime) / duration, 1);
+                
+                const rotateY = 180 * (1 - progress);
+                const translateX = progress * 100;
+                
+                flipPage.style.transform = `rotateY(${rotateY}deg) translateX(${translateX}%)`;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    currentPage--;
+                    updatePageInfo();
+                    
+                    if (currentPage === 0) {
+                        emptyLeft.style.display = 'flex';
+                    } else {
+                        renderPage(currentPage - 1, ctxLeft, canvasLeft);
+                    }
+                    
+                    renderPage(currentPage, ctxRight, canvasRight);
+                    
+                    flipPage.style.display = 'none';
+                    isFlipping = false;
+                }
+            }
+            
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (data.action === 'loadPDF') {
+                loadPDF(data.path);
+            } else if (data.action === 'nextPage') {
+                flipToNext();
+            } else if (data.action === 'prevPage') {
+                flipToPrev();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            if (pdfDoc && currentPage >= 0) {
+                renderPage(currentPage, ctxRight, canvasRight);
+                if (currentPage > 0) {
+                    renderPage(currentPage - 1, ctxLeft, canvasLeft);
+                }
+            }
+        });
+
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
