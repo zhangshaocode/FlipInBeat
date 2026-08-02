@@ -4,10 +4,10 @@
 		'sheet-expanded': isSheetExpanded,
 		'reading-mode': pdfLoaded
 	}" :style="themeStyle">
-	<!-- #ifdef APP-PLUS || H5 -->
-		<view :prop="audioData" :change:prop="audio.onAudioDataChange" class="hidden"></view>
-		<view :prop="fileTrigger" :change:prop="audio.onFileTrigger" class="hidden"></view>
-		<view :prop="pdfData" :change:prop="audio.onPdfDataChange" class="hidden"></view>
+	<!-- #ifndef MP-WEIXIN -->
+	<view :prop="audioData" :change:prop="audio.onAudioDataChange" class="hidden"></view>
+	<view :prop="fileTrigger" :change:prop="audio.onFileTrigger" class="hidden"></view>
+	<view :prop="pdfData" :change:prop="audio.onPdfDataChange" class="hidden"></view>
 	<!-- #endif -->
 		<view class="header" v-if="!pdfLoaded">
 			<view class="header-left">
@@ -30,7 +30,7 @@
 					<view class="loading-spinner"></view>
 					<text class="loading-text">正在加载中，请稍后...</text>
 				</view>
-				<view class="pdf-canvas-wrapper" id="pdfCanvasContainer" :class="{ 'page-turning': isPageTurning, 'turn-left': turnDirection === 'left', 'turn-right': turnDirection === 'right' }">
+				<view class="pdf-canvas-wrapper" id="pdfCanvasContainer">
 				</view>
 				<view class="page-indicator">
 					<text class="page-text">{{ currentPage + 1 }} / {{ totalPages }}</text>
@@ -99,6 +99,28 @@
 				</view>
 				
 				<view class="section-header">
+					<text class="section-title">外观</text>
+				</view>
+				<view class="settings-list">
+					<view class="setting-item" @click="toggleDarkMode">
+						<text class="setting-icon">{{ isDarkMode ? '🌙' : '☀️' }}</text>
+						<text class="setting-label">{{ isDarkMode ? '深色模式' : '亮色模式' }}</text>
+						<view class="toggle-switch" :class="{ 'on': isDarkMode }">
+							<view class="toggle-knob"></view>
+						</view>
+					</view>
+					<view class="setting-item" @click="chooseBackground">
+						<text class="setting-icon">🖼️</text>
+						<text class="setting-label">自定义背景图</text>
+						<text class="setting-value">{{ customBackground ? '已设置' : '未设置' }}</text>
+					</view>
+					<view class="setting-item" v-if="customBackground" @click="clearBackground">
+						<text class="setting-icon">❌</text>
+						<text class="setting-label">清除背景图</text>
+					</view>
+				</view>
+				
+				<view class="section-header">
 					<text class="section-title">节拍器效果</text>
 				</view>
 				<view class="settings-list">
@@ -153,6 +175,7 @@
 			v-if="!pdfLoaded || currentTab === 'metronome'"
 			:currentTab="currentTab"
 			:isPlaying="isPlaying"
+			:isDarkMode="isDarkMode"
 			:theme="themes[currentTheme]"
 			@change="switchTab"
 		/>
@@ -166,7 +189,7 @@
 <script>
 	import BottomNav from '@/components/bottom-nav.vue'
 	import MetronomePanel from '@/components/metronome-panel.vue'
-	import { ScoreStorage, saveFileToLocal } from '@/utils/score-storage.js'
+	import { ScoreStorage } from '@/utils/score-storage.js'
 
 	export default {
 		components: {
@@ -215,6 +238,8 @@
 					purple: { name: '紫色', primary: '#8B5CF6', secondary: '#A78BFA', accent: '#C4B5FD', bg: '#FAF5FF' },
 					green: { name: '浅绿色', primary: '#10B981', secondary: '#34D399', accent: '#6EE7B7', bg: '#F0FDF4' }
 				},
+				isDarkMode: false,
+				customBackground: '',
 				particleEffect: true,
 				
 				showToast: false,
@@ -233,11 +258,19 @@
 			
 			themeStyle() {
 				const theme = this.themes[this.currentTheme]
+				const bgColor = this.isDarkMode ? '#1a1a2e' : theme.bg
+				const bgImage = this.customBackground ? `url(${this.customBackground})` : 'none'
 				return {
 					'--theme-primary': theme.primary,
 					'--theme-secondary': theme.secondary,
 					'--theme-accent': theme.accent,
-					'--theme-bg': theme.bg
+					'--theme-bg': bgColor,
+					'--theme-text': this.isDarkMode ? '#e8e8ec' : '#1a1a1a',
+					'--theme-card': this.isDarkMode ? 'rgba(40, 40, 55, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+					'--theme-border': this.isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+					'--theme-bg-image': bgImage,
+					'--theme-bg-image-size': 'cover',
+					'--theme-bg-image-position': 'center center'
 				}
 			}
 		},
@@ -251,6 +284,16 @@
 				this.currentTheme = savedTheme
 			} else {
 				this.currentTheme = 'skyblue'
+			}
+			
+			const savedDark = uni.getStorageSync('flipinbeat_dark')
+			if (savedDark !== undefined && savedDark !== '') {
+				this.isDarkMode = savedDark === 'true' || savedDark === true
+			}
+			
+			const savedBg = uni.getStorageSync('flipinbeat_bg')
+			if (savedBg) {
+				this.customBackground = savedBg
 			}
 			
 			const savedParticle = uni.getStorageSync('flipinbeat_particle')
@@ -272,8 +315,17 @@
 		
 		onShow() {
 			console.log('Page onShow, loading scores...')
+			// 先显示本地缓存
 			this.scoreList = ScoreStorage.getScores()
-			console.log('Loaded scores count:', this.scoreList.length)
+			// 从服务器同步最新列表
+			ScoreStorage.fetchServerList()
+				.then((scores) => {
+					this.scoreList = scores
+					console.log('Synced scores from server:', scores.length)
+				})
+				.catch((err) => {
+					console.warn('Sync from server failed, using local:', err.message)
+				})
 			if (this.scoreList.length > 0) {
 				this.currentTab = 'library'
 			}
@@ -281,8 +333,12 @@
 		
 		onUnload() {
 				this.stopMetronome()
+				if (this._webAudioCtx) {
+					try { this._webAudioCtx.close() } catch(e) {}
+					this._webAudioCtx = null
+				}
 				if (this.audioCtx) {
-					this.audioCtx.close()
+					try { this.audioCtx.close() } catch(e) {}
 				}
 				if (this.innerAudioStrong) {
 					this.innerAudioStrong.destroy()
@@ -292,6 +348,12 @@
 				}
 				if (this.innerAudio) {
 					this.innerAudio.destroy()
+				}
+				if (this._audioPool) {
+					for (var i = 0; i < this._audioPool.length; i++) {
+						this._audioPool[i].destroy()
+					}
+					this._audioPool = null
 				}
 			},
 		
@@ -308,6 +370,31 @@
 			
 			initAudioContext() {
 				this.audioInitialized = false
+				// 预加载节拍器音频（微信小程序需要先加载才能播放）
+				// #ifndef H5
+				this._initBeatAudioPool()
+				// #endif
+			},
+			
+			_initBeatAudioPool() {
+				if (this._audioPool) return
+				this._audioPool = []
+				this._poolIdx = 0
+				this._audioReadyCount = 0
+				for (var i = 0; i < 3; i++) {
+					var ctx = uni.createInnerAudioContext()
+					ctx.obeyMuteSwitch = false
+					ctx.src = '/static/click1.wav'
+					;(function(idx, self) {
+						ctx.onCanplay(function() {
+							self._audioReadyCount = (self._audioReadyCount || 0) + 1
+						})
+						ctx.onError(function(res) {
+							console.error('Beat audio[' + idx + '] error:', res)
+						})
+					})(i, this)
+					this._audioPool.push(ctx)
+				}
 			},
 			
 			ensureAudioContext() {
@@ -374,6 +461,38 @@
 				this.showToastMsg(`已切换到${this.themes[themeKey].name}主题`)
 			},
 			
+			toggleDarkMode() {
+				this.isDarkMode = !this.isDarkMode
+				uni.setStorageSync('flipinbeat_dark', this.isDarkMode)
+				this.showToastMsg(this.isDarkMode ? '已切换深色模式' : '已切换亮色模式')
+			},
+			
+			chooseBackground() {
+				uni.chooseImage({
+					count: 1,
+					sizeType: ['compressed'],
+					sourceType: ['album', 'camera'],
+					success: (res) => {
+						const tempPath = res.tempFilePaths[0]
+						this.customBackground = tempPath
+						uni.setStorageSync('flipinbeat_bg', tempPath)
+						this.showToastMsg('背景已设置')
+					},
+					fail: (err) => {
+						if (err.errMsg && err.errMsg.indexOf('cancel') === -1) {
+							console.error('Choose image failed:', err)
+							this.showToastMsg('选择图片失败')
+						}
+					}
+				})
+			},
+			
+			clearBackground() {
+				this.customBackground = ''
+				uni.removeStorageSync('flipinbeat_bg')
+				this.showToastMsg('已恢复默认背景')
+			},
+			
 			toggleParticleEffect() {
 				this.particleEffect = !this.particleEffect
 				uni.setStorageSync('flipinbeat_particle', this.particleEffect)
@@ -382,19 +501,65 @@
 			
 			importPDF() {
 				//#ifdef MP-WEIXIN
-				this.showToastMsg('微信小程序不支持文件导入，请使用APP端')
+				uni.chooseMessageFile({
+					count: 1,
+					type: 'file',
+					extension: ['.pdf'],
+					success: (res) => {
+						const tempFile = res.tempFiles[0]
+						if (!tempFile) {
+							this.showToastMsg('未获取到文件')
+							return
+						}
+						this.uploadToServer(tempFile.path, tempFile.name)
+					},
+					fail: (err) => {
+						if (err.errMsg && err.errMsg.indexOf('cancel') === -1) {
+							console.error('Choose file failed:', err)
+							this.showToastMsg('选择文件失败，请从聊天记录中选择PDF文件')
+						}
+					}
+				})
 				return
 				//#endif
-				
+
+				//#ifdef APP-PLUS || H5
 				this.fileTrigger++
+				//#endif
+			},
+
+			uploadToServer(filePath, fileName) {
+				this.showToastMsg('正在上传乐谱到服务器...')
+				ScoreStorage.uploadToServer(filePath, fileName)
+					.then((score) => {
+						this.scoreList = ScoreStorage.getScores()
+						this.showToastMsg('乐谱上传成功：' + score.name)
+					})
+					.catch((err) => {
+						console.error('Upload failed:', err)
+						this.showToastMsg('上传失败：' + err.message)
+					})
 			},
 			
+			onUploadStart(data) {
+				this.showToastMsg('正在上传：' + data.name)
+			},
+
+			onUploadSuccess(score) {
+				ScoreStorage.addScore(score)
+				this.scoreList = ScoreStorage.getScores()
+				this.showToastMsg('上传成功：' + score.name)
+			},
+
+			onUploadFail(data) {
+				console.error('Upload failed:', data)
+				this.showToastMsg('上传失败：' + data.message)
+			},
+
 			onFileSelected(data) {
-				console.log('onFileSelected:', data.name, data.base64 ? data.base64.length : 0)
-				this.showToastMsg('正在加载乐谱...')
-				this.openPDFDirectly(data.base64, data.name)
+				// 兼容旧逻辑（不再使用）
 			},
-			
+
 			openPDFDirectly(base64, fileName) {
 				this.currentScoreName = fileName
 				this.totalPages = 10
@@ -409,12 +574,24 @@
 				this.pdfLoading = false
 				this.pdfData = ''
 				this.currentScoreName = ''
+				// 通知renderjs清理资源
+				this.pdfData = '__CLEAR__'
+				this.$nextTick(() => {
+					this.pdfData = ''
+				})
 			},
 			
 			onPDFLoaded(data) {
 				console.log('PDF loaded, total pages:', data.totalPages)
 				this.totalPages = data.totalPages
 				this.pdfLoading = false
+			},
+
+			onPDFLoadFail(data) {
+				console.error('PDF load failed:', data.message)
+				this.pdfLoading = false
+				this.pdfLoaded = false
+				this.showToastMsg('PDF加载失败：' + data.message)
 			},
 			
 			onPageChanged(data) {
@@ -429,689 +606,91 @@
 					this.isPageTurning = false
 				}, 400)
 			},
-			
-						handleActivityResult(data) {
-				console.log('handleActivityResult called:', data)
-				try {
-					const uri = plus.android.invoke(data, 'getData')
-					console.log('URI:', uri)
-					
-					const resolver = plus.android.runtimeMainActivity().getContentResolver()
-					
-					let fileName = 'unknown.pdf'
-					try {
-						const cursor = plus.android.invoke(resolver, 'query', uri, null, null, null, null)
-						if (cursor) {
-							const nameIndex = plus.android.invoke(cursor, 'getColumnIndex', '_display_name')
-							plus.android.invoke(cursor, 'moveToFirst')
-							fileName = plus.android.invoke(cursor, 'getString', nameIndex) || 'unknown.pdf'
-							plus.android.invoke(cursor, 'close')
-						}
-					} catch (e) {
-						console.warn('Failed to get filename from cursor:', e)
-						fileName = 'imported.pdf'
-					}
-					console.log('File name:', fileName)
-					
-					this.copyFileToAppStorage(uri, fileName)
-				} catch (err) {
-					console.error('File read failed:', err)
-					this.showToastMsg('文件处理失败: ' + err.message)
-				}
-			},
-			
-			copyFileToAppStorage(uri, fileName) {
-				console.log('copyFileToAppStorage:', fileName)
-				this.showToastMsg('正在导入文件...')
-				
-				try {
-					const resolver = plus.android.runtimeMainActivity().getContentResolver()
-					const inputStream = plus.android.invoke(resolver, 'openInputStream', uri)
-					console.log('InputStream:', inputStream ? 'OK' : 'null')
-					
-					if (!inputStream) {
-						this.showToastMsg('无法打开文件')
-						return
-					}
-					
-					const docDir = plus.io.convertLocalFileSystemURL('_doc/')
-					console.log('Doc dir:', docDir)
-					
-					const File = plus.android.importClass('java.io.File')
-					const FileOutputStream = plus.android.importClass('java.io.FileOutputStream')
-					const Channels = plus.android.importClass('java.nio.channels.Channels')
-					
-					const extIndex = fileName.lastIndexOf('.')
-					const baseName = extIndex > 0 ? fileName.substring(0, extIndex) : fileName
-					const ext = extIndex > 0 ? fileName.substring(extIndex) : '.pdf'
-					
-					let finalName = fileName
-					const existingScores = ScoreStorage.getScores()
-					if (existingScores.some(s => s.name === fileName)) {
-						let count = 1
-						while (existingScores.some(s => s.name === `${baseName}(${count})${ext}`)) {
-							count++
-						}
-						finalName = `${baseName}(${count})${ext}`
-					}
-					
-					const outputFile = new File(docDir, finalName)
-					const outputStream = new FileOutputStream(outputFile)
-					
-					const srcChannel = plus.android.invoke(Channels, 'newChannel', inputStream)
-					const destChannel = plus.android.invoke(outputStream, 'getChannel')
-					
-					let totalTransferred = 0
-					const chunkSize = 1048576
-					while (true) {
-						const transferred = plus.android.invoke(destChannel, 'transferFrom', srcChannel, totalTransferred, chunkSize)
-						let count = 0
-						try { count = Number(transferred); if (isNaN(count)) count = 0 }
-						catch (e) { count = 0 }
-						if (count <= 0) break
-						totalTransferred += count
-					}
-					console.log('Total transferred:', totalTransferred)
-					
-					plus.android.invoke(srcChannel, 'close')
-					plus.android.invoke(destChannel, 'close')
-					plus.android.invoke(outputStream, 'close')
-					plus.android.invoke(inputStream, 'close')
-					
-					const fileSize = plus.android.invoke(outputFile, 'length')
-					console.log('Output file size:', fileSize)
-					
-					if (fileSize > 0) {
-						const fileUrl = outputFile.toURL ? plus.android.invoke(outputFile, 'toURL') : ('file://' + docDir + finalName)
-						console.log('File URL:', fileUrl)
-						
-						const newScore = {
-							id: ScoreStorage.generateId(),
-							name: finalName,
-							localPath: String(fileUrl),
-							isBase64: false,
-							importDate: Date.now()
-						}
-						
-						ScoreStorage.addScore(newScore)
-						
-						const that = this
-						this.$nextTick(() => {
-							that.scoreList = ScoreStorage.getScores()
-							console.log('Score list updated:', that.scoreList.length)
-							setTimeout(() => {
-								that.currentTab = 'library'
-								that.showToastMsg('乐谱导入成功')
-							}, 100)
-						})
-					} else {
-						console.error('Output file is empty')
-						this.showToastMsg('文件保存失败')
-					}
-				} catch (err) {
-					console.error('Copy file failed:', err)
-					try {
-						this.copyFileViaFileUtilsFallback(uri, fileName)
-					} catch (e2) {
-						this.showToastMsg('文件导入失败: ' + err.message)
-					}
-				}
-			},
-			
-			copyFileViaFileUtilsFallback(uri, fileName) {
-				console.log('Trying FileUtils.copy fallback')
-				const resolver = plus.android.runtimeMainActivity().getContentResolver()
-				const inputStream = plus.android.invoke(resolver, 'openInputStream', uri)
-				const docDir = plus.io.convertLocalFileSystemURL('_doc/')
-				const File = plus.android.importClass('java.io.File')
-				const FileOutputStream = plus.android.importClass('java.io.FileOutputStream')
-				const outputFile = new File(docDir, fileName)
-				const outputStream = new FileOutputStream(outputFile)
-				
-				const FileUtils = plus.android.importClass('android.os.FileUtils')
-				plus.android.invoke(FileUtils, 'copy', inputStream, outputStream)
-				
-				plus.android.invoke(outputStream, 'flush')
-				plus.android.invoke(outputStream, 'close')
-				plus.android.invoke(inputStream, 'close')
-				
-				const fileSize = plus.android.invoke(outputFile, 'length')
-				console.log('FileUtils copy result, size:', fileSize)
-				
-				if (fileSize > 0) {
-					const newScore = {
-						id: ScoreStorage.generateId(),
-						name: fileName,
-						localPath: 'file://' + docDir + fileName,
-						isBase64: false,
-						importDate: Date.now()
-					}
-					ScoreStorage.addScore(newScore)
-					const that = this
-					this.$nextTick(() => {
-						that.scoreList = ScoreStorage.getScores()
-						setTimeout(() => { that.currentTab = 'library'; that.showToastMsg('乐谱导入成功') }, 100)
-					})
-				} else {
-					this.showToastMsg('文件导入失败')
-				}
-			},
-			
-			readFileUsingJava(uri, fileName) {
-				console.log('readFileUsingJava:', fileName)
-				
-				try {
-					const uriStr = plus.android.invoke(uri, 'toString')
-					console.log('URI string:', uriStr)
-					
-					let filePath = ''
-					const resolver = plus.android.runtimeMainActivity().getContentResolver()
-					
-					try {
-						const cursor = plus.android.invoke(resolver, 'query', uri, ['_data'], null, null, null)
-						if (cursor) {
-							plus.android.invoke(cursor, 'moveToFirst')
-							const colIdx = plus.android.invoke(cursor, 'getColumnIndex', '_data')
-							filePath = plus.android.invoke(cursor, 'getString', colIdx)
-							plus.android.invoke(cursor, 'close')
-							console.log('Got _data from cursor:', filePath)
-						}
-					} catch (e) {
-						console.warn('Cursor query failed:', e)
-					}
-					
-					if (!filePath) {
-						console.warn('Could not resolve file path, trying content resolver')
-						this.readFileWithContentResolver(uri, fileName)
-						return
-					}
-					
-					const File = plus.android.importClass('java.io.File')
-					const file = new File(filePath)
-					const exists = plus.android.invoke(file, 'exists')
-					const size = plus.android.invoke(file, 'length')
-					console.log('File exists:', exists, 'size:', size)
-					
-					if (!exists || size <= 0) {
-						console.error('File not found or empty at:', filePath)
-						this.readFileWithContentResolver(uri, fileName)
-						return
-					}
-					
-					const FileInputStream = plus.android.importClass('java.io.FileInputStream')
-					const ByteArrayOutputStream = plus.android.importClass('java.io.ByteArrayOutputStream')
-					const fis = new FileInputStream(file)
-					const baos = new ByteArrayOutputStream()
-					const ByteBuffer = plus.android.importClass('java.nio.ByteBuffer')
-					const buf = plus.android.invoke(ByteBuffer, 'allocate', 8192)
-					const buffer = plus.android.invoke(buf, 'array')
-					let totalRead = 0
-					
-					while (true) {
-						const byteCountObj = plus.android.invoke(fis, 'read', buffer)
-						let byteCount = -1
-						if (byteCountObj === null || byteCountObj === undefined) {
-							break
-						}
-						try {
-							byteCount = parseInt(byteCountObj.toString())
-						} catch (e) {
-							byteCount = -1
-						}
-						if (byteCount <= 0) break
-						
-						plus.android.invoke(baos, 'write', buffer, 0, byteCount)
-						totalRead += byteCount
-					}
-					plus.android.invoke(fis, 'close')
-					console.log('Total bytes read:', totalRead)
-					
-					const byteArray = plus.android.invoke(baos, 'toByteArray')
-					const byteLength = plus.android.invoke(byteArray, 'length')
-					console.log('Byte array length:', byteLength)
-					
-					const Base64 = plus.android.importClass('android.util.Base64')
-					const base64Str = plus.android.invoke(Base64, 'encodeToString', byteArray, Base64.DEFAULT)
-					console.log('Base64长度:', base64Str ? base64Str.length : 0)
-					
-					if (base64Str && base64Str.length > 100) {
-						this.handleBase64Import(base64Str, fileName)
-					} else {
-						console.error('Base64 conversion returned null/empty')
-						this.showToastMsg('文件数据转换失败')
-					}
-				} catch (e) {
-					console.error('Java file read failed:', e)
-					this.readFileWithContentResolver(uri, fileName)
-				}
-			},
-			
-			readFileWithContentResolver(uri, fileName) {
-				console.log('readFileWithContentResolver:', fileName)
-				
-				try {
-					const resolver = plus.android.runtimeMainActivity().getContentResolver()
-					const inputStream = plus.android.invoke(resolver, 'openInputStream', uri)
-					console.log('InputStream:', inputStream ? 'OK' : 'null')
-					
-					if (!inputStream) {
-						this.showToastMsg('无法打开文件')
-						return
-					}
-					
-					const ByteArrayOutputStream = plus.android.importClass('java.io.ByteArrayOutputStream')
-					const ByteBuffer = plus.android.importClass('java.nio.ByteBuffer')
-					const baos = new ByteArrayOutputStream()
-					const buf = plus.android.invoke(ByteBuffer, 'allocate', 8192)
-					const buffer = plus.android.invoke(buf, 'array')
-					let totalRead = 0
-					
-					while (true) {
-						const result = plus.android.invoke(inputStream, 'read', buffer)
-						let byteCount = -1
-						
-						try { byteCount = Number(result); if (isNaN(byteCount)) byteCount = -1 }
-						catch (e) {
-							try { byteCount = parseInt(plus.android.invoke(result, 'toString')) }
-							catch (e2) { break }
-						}
-						
-						if (byteCount <= 0) break
-						
-						plus.android.invoke(baos, 'write', buffer, 0, byteCount)
-						totalRead += byteCount
-					}
-					plus.android.invoke(inputStream, 'close')
-					console.log('Total bytes read:', totalRead)
-					
-					const byteArray = plus.android.invoke(baos, 'toByteArray')
-					const length = plus.android.invoke(byteArray, 'length')
-					console.log('Byte array length:', length)
-					
-					if (length > 0) {
-						const Base64 = plus.android.importClass('android.util.Base64')
-						const base64Str = plus.android.invoke(Base64, 'encodeToString', byteArray, Base64.DEFAULT)
-						console.log('Base64 length:', base64Str ? base64Str.length : 0)
-						
-						if (base64Str && base64Str.length > 100) {
-							this.handleBase64Import(base64Str, fileName)
-						} else {
-							this.showToastMsg('文件数据转换失败')
-						}
-					} else {
-						console.error('Empty byte array')
-						this.showToastMsg('文件内容为空')
-					}
-				} catch (err) {
-					console.error('ContentResolver method failed:', err)
-					this.showToastMsg('文件读取失败: ' + err.message)
-				}
-			},
-			
-			convertAndSave(byteArray, length, fileName) {
-				console.log('convertAndSave:', length, fileName)
-				
-				const Base64 = plus.android.importClass('android.util.Base64')
-				const DEFAULT = 0
-				
-				try {
-					const base64Str = plus.android.invoke(Base64, 'encodeToString', byteArray, DEFAULT)
-					console.log('Android Base64 result:', base64Str ? base64Str.length : 0)
-					
-					if (base64Str && base64Str.length > 100) {
-						this.handleBase64Import(base64Str, fileName)
-						return
-					}
-				} catch (e) {
-					console.warn('Android Base64 failed:', e)
-				}
-				
-				try {
-					let binary = ''
-					const uint8Array = new Uint8Array(length)
-					for (let i = 0; i < length; i++) {
-						const byteVal = plus.android.invoke(byteArray, 'get', i)
-						uint8Array[i] = byteVal & 0xFF
-					}
-					const blob = new Blob([uint8Array], { type: 'application/pdf' })
-					const reader = new FileReader()
-					reader.onload = (e) => {
-						const dataUrl = e.target.result
-						const base64Str = dataUrl.split(',')[1]
-						console.log('Blob to Base64 result:', base64Str ? base64Str.length : 0)
-						if (base64Str && base64Str.length > 100) {
-							this.handleBase64Import(base64Str, fileName)
-						} else {
-							console.error('Blob conversion failed')
-							this.showToastMsg('文件数据转换失败')
-						}
-					}
-					reader.readAsDataURL(blob)
-				} catch (e2) {
-					console.error('Blob conversion failed:', e2)
-					this.showToastMsg('文件数据转换失败')
-				}
-			},
-			
-			async handlePathImport(filePath, originalName) {
-				this.showToastMsg('正在保存乐谱...')
-				
-				try {
-					const isDuplicate = ScoreStorage.checkDuplicateName(originalName)
-					
-					let finalName = originalName
-					
-					if (isDuplicate) {
-						await new Promise((resolve) => {
-							uni.showActionSheet({
-								itemList: ['自动添加(1)', '自定义名称'],
-								success: async (res) => {
-									if (res.tapIndex === 0) {
-										finalName = ScoreStorage.generateUniqueName(originalName)
-									} else {
-										await new Promise((innerResolve) => {
-											uni.showModal({
-												title: '自定义名称',
-												editable: true,
-												placeholderText: '请输入乐谱名称',
-												success: (modalRes) => {
-													if (modalRes.confirm && modalRes.content) {
-														let customName = modalRes.content.trim()
-														if (!customName.endsWith('.pdf')) {
-															customName += '.pdf'
-														}
-														finalName = ScoreStorage.generateUniqueName(customName)
-													} else {
-														finalName = ScoreStorage.generateUniqueName(originalName)
-													}
-													innerResolve()
-												}
-											})
-										})
-									}
-									resolve()
-								},
-								fail: () => {
-									finalName = ScoreStorage.generateUniqueName(originalName)
-									resolve()
-								}
-							})
-						})
-					}
-					
-					const newScore = {
-						id: ScoreStorage.generateId(),
-						name: finalName,
-						localPath: filePath,
-						isBase64: false,
-						importDate: Date.now()
-					}
-					
-					ScoreStorage.addScore(newScore)
-					this.loadScores()
-					
-					this.showToastMsg('乐谱导入成功')
-					
-				} catch (err) {
-					console.error('File import failed:', err)
-					this.showToastMsg('保存失败，请重试')
-				}
-			},
-			
-			async handleFileImport(tempFilePath, originalName) {
-				this.showToastMsg('正在保存乐谱...')
-				
-				try {
-					const isDuplicate = ScoreStorage.checkDuplicateName(originalName)
-					
-					let finalName = originalName
-					
-					if (isDuplicate) {
-						await new Promise((resolve) => {
-							uni.showActionSheet({
-								itemList: ['自动添加(1)', '自定义名称'],
-								success: async (res) => {
-									if (res.tapIndex === 0) {
-										finalName = ScoreStorage.generateUniqueName(originalName)
-									} else {
-										await new Promise((innerResolve) => {
-											uni.showModal({
-												title: '自定义名称',
-												editable: true,
-												placeholderText: '请输入乐谱名称',
-												success: (modalRes) => {
-													if (modalRes.confirm && modalRes.content) {
-														let customName = modalRes.content.trim()
-														if (!customName.endsWith('.pdf')) {
-															customName += '.pdf'
-														}
-														finalName = ScoreStorage.generateUniqueName(customName)
-													} else {
-														finalName = ScoreStorage.generateUniqueName(originalName)
-													}
-													innerResolve()
-												}
-											})
-										})
-									}
-									resolve()
-								},
-								fail: () => {
-									finalName = ScoreStorage.generateUniqueName(originalName)
-									resolve()
-								}
-							})
-						})
-					}
-					
-					const saveResult = await saveFileToLocal(tempFilePath, finalName)
-					
-					const newScore = {
-						id: ScoreStorage.generateId(),
-						name: finalName,
-						localPath: saveResult.savedFilePath,
-						isBase64: saveResult.isBase64 || false,
-						importDate: Date.now()
-					}
-					
-					ScoreStorage.addScore(newScore)
-					this.loadScores()
-					
-					this.showToastMsg('乐谱导入成功')
-					
-				} catch (err) {
-					console.error('File import failed:', err)
-					this.showToastMsg('保存失败，请重试')
-				}
-			},
-			
-			handleBase64Import(base64, originalName) {
-				console.log('handleBase64Import called:', originalName, base64 ? base64.length : 0)
-				this.showToastMsg('正在保存乐谱...')
-				
-				try {
-					if (!base64 || base64.length < 100) {
-						console.error('Invalid base64 data')
-						this.showToastMsg('文件数据无效')
-						return
-					}
-					
-					const extIndex = originalName.lastIndexOf('.')
-					const baseName = extIndex > 0 ? originalName.substring(0, extIndex) : originalName
-					const ext = extIndex > 0 ? originalName.substring(extIndex) : '.pdf'
-					
-					let finalName = originalName
-					const existingScores = ScoreStorage.getScores()
-					console.log('Existing scores count before add:', existingScores.length)
-					
-					const nameExists = existingScores.some(s => s.name === originalName)
-					console.log('Name exists:', nameExists)
-					
-					if (nameExists) {
-						let count = 1
-						while (existingScores.some(s => s.name === `${baseName}(${count})${ext}`)) {
-							count++
-						}
-						finalName = `${baseName}(${count})${ext}`
-					}
-					
-					const that = this
-					
-					plus.io.requestFileSystem(plus.io.PRIVATE_DOC, function(fs) {
-						fs.root.getFile(finalName, { create: true }, function(fileEntry) {
-							fileEntry.createWriter(function(writer) {
-								writer.onwrite = function() {
-									console.log('File written successfully')
-									const fileUrl = fileEntry.toURL()
-									console.log('File URL:', fileUrl)
-									
-									const newScore = {
-										id: ScoreStorage.generateId(),
-										name: finalName,
-										localPath: fileUrl,
-										isBase64: false,
-										importDate: Date.now()
-									}
-									
-									console.log('Adding new score:', finalName)
-									ScoreStorage.addScore(newScore)
-									
-									const scoresAfterAdd = ScoreStorage.getScores()
-									console.log('Scores after add:', scoresAfterAdd.length)
-									
-									that.$nextTick(() => {
-										that.scoreList = [...scoresAfterAdd]
-										console.log('Score list updated:', that.scoreList.length)
-										setTimeout(() => {
-											that.currentTab = 'library'
-											that.showToastMsg('乐谱导入成功')
-										}, 100)
-									})
-								}
-								writer.onerror = function(e) {
-									console.error('Write error:', e)
-									that.showToastMsg('文件写入失败')
-								}
-								
-								const base64Data = base64.startsWith('data:') ? base64.split(',')[1] : base64
-												writer.seek(0)
-												writer.writeAsBinary(that.base64ToArrayBuffer(base64Data))
-							}, function(e) {
-								console.error('Create writer failed:', e)
-								that.showToastMsg('文件创建失败')
-							})
-						}, function(e) {
-							console.error('Get file failed:', e)
-							that.showToastMsg('文件创建失败')
-						})
-					}, function(e) {
-						console.error('Request file system failed:', e)
-						that.showToastMsg('文件系统不可用')
-					})
-				} catch (err) {
-					console.error('File import failed:', err)
-					this.showToastMsg('保存失败: ' + err.message)
-				}
-			},
-			
-			base64ToArrayBuffer(base64) {
-				const binaryStr = atob(base64)
-				const bytes = new ArrayBuffer(binaryStr.length)
-				const uint8Arr = new Uint8Array(bytes)
-				for (let i = 0; i < binaryStr.length; i++) {
-					uint8Arr[i] = binaryStr.charCodeAt(i)
-				}
-				return bytes
-			},
-			
-			async handleH5FileImport(file) {
-				this.showToastMsg('正在保存乐谱...')
-				
-				try {
-					const originalName = file.name
-					const extIndex = originalName.lastIndexOf('.')
-					const baseName = extIndex > 0 ? originalName.substring(0, extIndex) : originalName
-					const ext = extIndex > 0 ? originalName.substring(extIndex) : '.pdf'
-					
-					let finalName = originalName
-					const existingScores = ScoreStorage.getScores()
-					const nameExists = existingScores.some(s => s.name === originalName)
-					
-					if (nameExists) {
-						let count = 1
-						while (existingScores.some(s => s.name === `${baseName}(${count})${ext}`)) {
-							count++
-						}
-						finalName = `${baseName}(${count})${ext}`
-					}
-					
-					const arrayBuffer = await file.arrayBuffer()
-					const base64 = this.arrayBufferToBase64(arrayBuffer)
-					
-					const newScore = {
-						id: ScoreStorage.generateId(),
-						name: finalName,
-						localPath: base64,
-						isBase64: true,
-						importDate: Date.now()
-					}
-					
-					ScoreStorage.addScore(newScore)
-					this.loadScores()
-					
-					this.showToastMsg('乐谱导入成功')
-					
-				} catch (err) {
-					console.error('File import failed:', err)
-					this.showToastMsg('保存失败，请重试')
-				}
-			},
-			
-			arrayBufferToBase64(buffer) {
-				let binary = ''
-				const bytes = new Uint8Array(buffer)
-				const len = bytes.byteLength
-				for (let i = 0; i < len; i++) {
-					binary += String.fromCharCode(bytes[i])
-				}
-				return btoa(binary)
-			},
-			
+
 			openScore(score) {
-				//#ifdef MP-WEIXIN
-				this.showToastMsg('微信小程序不支持PDF阅读，请使用APP端')
-				return
-				//#endif
-				
 				this.currentScoreName = score.name
-				this.pdfFilePath = score.localPath
 				this.totalPages = 10
 				this.currentPage = 0
-				
-				this.showToastMsg('正在打开乐谱...')
-				
-				if (score.isBase64) {
-					const base64Data = `data:application/pdf;base64,${score.localPath}`
-					this.pdfViewerUrl = `/pages/pdf-viewer/pdf-viewer.html#pdf=${encodeURIComponent(base64Data)}`
-					this.pdfLoaded = true
-				} else if (uni.getFileSystemManager) {
-					const fs = uni.getFileSystemManager()
-					fs.readFile({
-						filePath: score.localPath,
-						encoding: 'base64',
-						success: (res) => {
-							const base64Data = `data:application/pdf;base64,${res.data}`
-							this.pdfViewerUrl = `/pages/pdf-viewer/pdf-viewer.html#pdf=${encodeURIComponent(base64Data)}`
-							this.pdfLoaded = true
-						},
-						fail: (err) => {
-							console.error('Failed to read PDF file, fallback to fetch:', err)
-							this.readPDFByFetch(score.localPath)
+				this.pdfLoading = true
+				this.showToastMsg('正在加载乐谱...')
+
+				const downloadUrl = ScoreStorage.getDownloadUrl(score.id)
+				console.log('Open score:', score.name, 'URL:', downloadUrl)
+
+				//#ifdef MP-WEIXIN
+				console.log('WeChat: downloading PDF...')
+				uni.downloadFile({
+					url: downloadUrl,
+					success: (res) => {
+						console.log('Download success:', res.statusCode, res.tempFilePath)
+						if (res.statusCode === 200) {
+							// 保存为临时文件并加上.pdf扩展名
+							var tempPath = res.tempFilePath
+							// 确保文件路径以.pdf结尾
+							uni.saveFile({
+								tempFilePath: tempPath,
+								success: (saveRes) => {
+									console.log('Save success:', saveRes.savedFilePath)
+									uni.openDocument({
+										filePath: saveRes.savedFilePath,
+										fileType: 'pdf',
+										showMenu: true,
+										success: () => {
+											console.log('Open document success')
+											this.pdfLoading = false
+										},
+										fail: (err) => {
+											console.error('Open document failed:', err)
+											// 尝试直接用临时文件打开
+											uni.openDocument({
+												filePath: tempPath,
+												fileType: 'pdf',
+												showMenu: true,
+												success: () => { this.pdfLoading = false },
+												fail: (err2) => {
+													console.error('Open temp failed:', err2)
+													this.pdfLoading = false
+													this.showToastMsg('打开文件失败：' + (err2.errMsg || ''))
+												}
+											})
+										}
+									})
+								},
+								fail: (err) => {
+									console.error('Save file failed:', err)
+									// 保存失败，直接用临时文件打开
+									uni.openDocument({
+										filePath: tempPath,
+										fileType: 'pdf',
+										showMenu: true,
+										success: () => { this.pdfLoading = false },
+										fail: (err2) => {
+											console.error('Open document failed:', err2)
+											this.pdfLoading = false
+											this.showToastMsg('打开文件失败')
+										}
+									})
+								}
+							})
+						} else {
+							this.pdfLoading = false
+							this.showToastMsg('下载失败：HTTP ' + res.statusCode)
 						}
-					})
-				} else {
-					this.readPDFByFetch(score.localPath)
-				}
+					},
+					fail: (err) => {
+						console.error('Download failed:', err)
+						this.pdfLoading = false
+						this.showToastMsg('下载失败：' + (err.errMsg || '网络错误'))
+					}
+				})
+				return
+				//#endif
+
+				//#ifdef APP-PLUS || H5
+				// 通过 renderjs 加载PDF（传入服务器URL）
+				this.pdfData = downloadUrl
+				this.pdfLoaded = true
+				//#endif
 			},
 			
 			readPDFByFetch(filePath) {
@@ -1162,9 +741,19 @@
 					content: `确定要删除 "${score.name}" 吗？`,
 					success: (res) => {
 						if (res.confirm) {
-							ScoreStorage.removeScore(score.id)
-							this.loadScores()
-							this.showToastMsg('已删除')
+							this.showToastMsg('正在删除...')
+							ScoreStorage.deleteFromServer(score.id)
+								.then(() => {
+									this.scoreList = ScoreStorage.getScores()
+									this.showToastMsg('已删除')
+								})
+								.catch((err) => {
+									console.error('Delete failed:', err)
+									// 服务器删除失败也从本地移除
+									ScoreStorage.removeScore(score.id)
+									this.scoreList = ScoreStorage.getScores()
+									this.showToastMsg('已从本地删除')
+								})
 						}
 					}
 				})
@@ -1214,6 +803,11 @@
 				if (this.timerID) {
 					clearTimeout(this.timerID)
 					this.timerID = null
+				}
+				if (this._audioPool) {
+					for (var i = 0; i < this._audioPool.length; i++) {
+						this._audioPool[i].stop()
+					}
 				}
 				this.currentBeat = 1
 				this.displayBeat = 0
@@ -1288,6 +882,9 @@
 				
 				this.displayBeat = beatNumber
 				this.audioData = { beat: beatNumber, isStrong: isStrong, bpm: this.bpm, toneType: this.toneType }
+
+				// 所有平台统一调用
+				this.playBeatLocally(isStrong)
 				
 				this.currentBeat++
 				if (this.currentBeat > this.beatsPerMeasure) {
@@ -1303,9 +900,53 @@
 				}, secondsPerBeat * 1000)
 			},
 			
+			playBeatLocally(isStrong) {
+				// #ifdef H5
+				if (typeof window !== 'undefined') {
+					try {
+						if (!this._webAudioCtx) {
+							var AC = window.AudioContext || window.webkitAudioContext
+							if (AC) this._webAudioCtx = new AC()
+						}
+						if (this._webAudioCtx) {
+							if (this._webAudioCtx.state === 'suspended') {
+								this._webAudioCtx.resume()
+							}
+							this.playBeatWithAudioCtx(isStrong)
+							return
+						}
+					} catch (e) {
+						console.error('Web Audio failed, fallback to pool:', e)
+					}
+				}
+				// #endif
+				this.playBeatWithPool(isStrong)
+			},
+			
+			playBeatWithPool(isStrong) {
+				try {
+					// 确保池已初始化
+					if (!this._audioPool) {
+						this._initBeatAudioPool()
+					}
+					
+					if (!this._audioPool || this._audioPool.length === 0) return
+					
+					var audio = this._audioPool[this._poolIdx]
+					audio.volume = isStrong ? 1.0 : 0.7
+					// 先seek到开头再play，确保每次都能播放
+					try { audio.seek(0) } catch(e) {}
+					audio.play()
+					this._poolIdx = (this._poolIdx + 1) % this._audioPool.length
+				} catch (e) {
+					console.error('playBeatWithPool failed:', e)
+				}
+			},
+			
 			playBeatWithAudioCtx(isStrong) {
 				try {
-					const ctx = this.audioCtx
+					var ctx = this._webAudioCtx
+					if (!ctx) return
 					if (ctx.state === 'suspended') {
 						ctx.resume()
 					}
@@ -1410,7 +1051,7 @@
 						break
 				}
 				
-				const volume = isStrong ? this.volume : this.volume * 0.7
+				const volume = isStrong ? 1.0 : 0.7
 				
 				for (let i = 0; i < numSamples; i++) {
 					const t = i / sampleRate
@@ -1468,25 +1109,14 @@
 	}
 </script>
 
-<!-- #ifdef APP-PLUS || H5 -->
+<!-- #ifndef MP-WEIXIN -->
 <script module="audio" lang="renderjs">
 	let audioCtx = null
 	
 	export default {
 		methods: {
 			onAudioDataChange(newVal, oldVal, ownerVm) {
-				if (!newVal || newVal.beat === 0) return
-				
-				if (!audioCtx) {
-					const AudioContext = window.AudioContext || window.webkitAudioContext
-					if (AudioContext) {
-						audioCtx = new AudioContext()
-					}
-				}
-				
-				if (audioCtx) {
-					this.playBeat(audioCtx, newVal.isStrong, newVal.toneType)
-				}
+				// 音频播放已在逻辑层统一处理，此处不再播放
 			},
 			
 			onFileTrigger(newVal, oldVal, ownerVm) {
@@ -1497,17 +1127,31 @@
 					input.removeAttribute('capture')
 					input.style.cssText = 'position:fixed;top:-100px;left:-100px;opacity:0;width:1px;height:1px;'
 					document.body.appendChild(input)
-					
+
 					input.onchange = async (e) => {
 						document.body.removeChild(input)
 						const file = e.target.files[0]
 						if (file) {
-							const arrayBuffer = await file.arrayBuffer()
-							const base64 = arrayBufferToBase64(arrayBuffer)
-							ownerVm.callMethod('onFileSelected', { base64, name: file.name, isBase64: true })
+							ownerVm.callMethod('onUploadStart', { name: file.name })
+							try {
+								const formData = new FormData()
+								formData.append('file', file)
+								const resp = await fetch('http://49.232.71.68:1092/api/upload', {
+									method: 'POST',
+									body: formData
+								})
+								const result = await resp.json()
+								if (result.success) {
+									ownerVm.callMethod('onUploadSuccess', result.score)
+								} else {
+									ownerVm.callMethod('onUploadFail', { message: result.error || '上传失败' })
+								}
+							} catch (err) {
+								ownerVm.callMethod('onUploadFail', { message: err.message || '网络错误' })
+							}
 						}
 					}
-					
+
 					input.click()
 				}
 			},
@@ -1548,89 +1192,447 @@
 			},
 			
 			onPdfDataChange(newVal, oldVal, ownerVm) {
-				if (!newVal || newVal === oldVal) return
+				if (!newVal) return
+				if (newVal === '__CLEAR__') {
+					this.cleanupPDF()
+					return
+				}
+				if (newVal === oldVal) return
 				this.loadPDF(newVal, ownerVm)
 			},
+
+			cleanupPDF() {
+				try {
+					// 取消渲染任务
+					if (this._renderTask) {
+						try { this._renderTask.cancel() } catch(e) {}
+						this._renderTask = null
+					}
+					// 销毁PDF文档释放内存
+					if (this.pdfDoc) {
+						try { this.pdfDoc.destroy() } catch(e) {}
+						this.pdfDoc = null
+					}
+					// 清理canvas
+					const container = document.getElementById('pdfCanvasContainer')
+					if (container) {
+						const canvases = container.querySelectorAll('canvas')
+						canvases.forEach(function(c) {
+							c.width = 0
+							c.height = 0
+							c.remove()
+						})
+						container._touchSetup = false
+					}
+					// 清理缓冲
+					this._bufferCanvas = null
+					this._bufferedPage = null
+				} catch(e) {
+					console.error('cleanupPDF error:', e)
+				}
+			},
 			
-			async loadPDF(base64, ownerVm) {
+			async loadPDF(pdfSource, ownerVm) {
 				try {
 					pdfOwnerVm = ownerVm
-					
+
 					const container = document.getElementById('pdfCanvasContainer')
-					if (container && !container.querySelector('canvas')) {
+					if (container) {
+						// 清理旧canvas
+						const oldCanvases = container.querySelectorAll('canvas')
+						oldCanvases.forEach(function(c) { c.remove() })
+
+						// 重建单canvas（已验证可工作的方式）
 						const c = document.createElement('canvas')
 						c.id = 'pdfRenderCanvas'
-						c.style.cssText = 'width:100%;height:100%;touch-action:none;'
+						c.style.cssText = 'width:100%;height:100%;touch-action:none;position:relative;'
 						container.appendChild(c)
+
+						// 创建离屏缓冲canvas（不加入DOM，用于预渲染）
+						this._bufferCanvas = document.createElement('canvas')
 					}
-					
+
 					if (!window.pdfjsLib) {
 						await this.loadPdfJs()
 					}
-					
-					const parts = base64.split(',')
-					const rawBase64 = parts.length > 1 ? parts[1] : base64
-					const binaryStr = window.atob(rawBase64)
-					const bytes = new Uint8Array(binaryStr.length)
-					for (let i = 0; i < binaryStr.length; i++) {
-						bytes[i] = binaryStr.charCodeAt(i)
+
+					let bytes
+					if (typeof pdfSource === 'string' && pdfSource.startsWith('http')) {
+						const response = await fetch(pdfSource)
+						const arrayBuffer = await response.arrayBuffer()
+						bytes = new Uint8Array(arrayBuffer)
+					} else {
+						const parts = pdfSource.split(',')
+						const rawBase64 = parts.length > 1 ? parts[1] : pdfSource
+						const binaryStr = window.atob(rawBase64)
+						bytes = new Uint8Array(binaryStr.length)
+						for (let i = 0; i < binaryStr.length; i++) {
+							bytes[i] = binaryStr.charCodeAt(i)
+						}
 					}
-					
+
 					this.pdfDoc = await window.pdfjsLib.getDocument({ data: bytes, disableWorker: true }).promise
 					this.totalPdfPages = this.pdfDoc.numPages
 					this.currentPdfPage = 1
-					
+
+					// 渲染当前页
+					await this.renderPageDirect(1)
+					// 预渲染下一页到缓冲
+					if (this.totalPdfPages > 1) {
+						this._preRenderNext(2)
+					}
+
 					this.setupTouch()
 					ownerVm.callMethod('onPDFLoaded', { totalPages: this.totalPdfPages })
-					this.renderPage(1, ownerVm)
+					ownerVm.callMethod('onPageChanged', { page: 1 })
 				} catch (err) {
 					console.error('PDF load failed:', err)
+					ownerVm.callMethod('onPDFLoadFail', { message: err.message })
 				}
 			},
-			
-			setupTouch() {
+
+			// 直接渲染到可见canvas
+			async renderPageDirect(pageNum) {
 				const canvas = document.getElementById('pdfRenderCanvas')
-				if (!canvas || canvas._touchSetup) return
-				canvas._touchSetup = true
-				
+				if (!canvas || !this.pdfDoc) return
+
+				if (this._renderTask) {
+					try { this._renderTask.cancel() } catch(e) {}
+					this._renderTask = null
+				}
+
+				const page = await this.pdfDoc.getPage(pageNum)
+				const dpr = Math.min(window.devicePixelRatio || 1, 2)
+				const container = canvas.parentElement
+				const rect = container.getBoundingClientRect()
+				const viewport = page.getViewport({ scale: 1 })
+
+				// 每次都重新计算 scale，确保适配不同尺寸的页面
+				const maxW = Math.max(50, rect.width - 20)
+				const maxH = Math.max(50, rect.height - 20)
+				const scale = Math.max(0.1, Math.min(maxW / viewport.width, maxH / viewport.height))
+				const scaledViewport = page.getViewport({ scale: scale * dpr })
+
+				// 重置所有 transform，确保干净状态
+				canvas.style.transition = 'none'
+				canvas.style.transform = 'none'
+				canvas.style.opacity = '1'
+				canvas.style.transformOrigin = 'center center'
+
+				canvas.width = scaledViewport.width
+				canvas.height = scaledViewport.height
+				canvas.style.width = (scaledViewport.width / dpr) + 'px'
+				canvas.style.height = (scaledViewport.height / dpr) + 'px'
+
+				const ctx = canvas.getContext('2d')
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+				ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+				await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: scale }) }).promise
+				try { page.cleanup() } catch(e) {}
+			},
+
+			// 预渲染到离屏缓冲
+			async _preRenderNext(pageNum) {
+				if (!this._bufferCanvas || !this.pdfDoc) return
+				const canvas = this._bufferCanvas
+
+				const page = await this.pdfDoc.getPage(pageNum)
+				const dpr = Math.min(window.devicePixelRatio || 1, 2)
+				const visibleCanvas = document.getElementById('pdfRenderCanvas')
+				if (!visibleCanvas) return
+				const container = visibleCanvas.parentElement
+				const rect = container.getBoundingClientRect()
+				const viewport = page.getViewport({ scale: 1 })
+
+				const maxW = Math.max(50, rect.width - 20)
+				const maxH = Math.max(50, rect.height - 20)
+				const scale = Math.max(0.1, Math.min(maxW / viewport.width, maxH / viewport.height))
+				const scaledViewport = page.getViewport({ scale: scale * dpr })
+
+				// 总是重新设置buffer尺寸，确保匹配当前页
+				canvas.width = scaledViewport.width
+				canvas.height = scaledViewport.height
+
+				const ctx = canvas.getContext('2d')
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+				ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+				await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: scale }) }).promise
+				try { page.cleanup() } catch(e) {}
+				this._bufferedPage = pageNum
+			},
+
+			// 将缓冲canvas内容绘制到可见canvas
+			_swapBufferToVisible() {
+				const visible = document.getElementById('pdfRenderCanvas')
+				const buffer = this._bufferCanvas
+				if (!visible || !buffer) return
+
+				// 确保buffer已渲染正确页面
+				if (!this._bufferedPage) return
+
+				// 重置可见canvas的transform
+				visible.style.transition = 'none'
+				visible.style.transform = 'none'
+				visible.style.opacity = '1'
+				visible.style.transformOrigin = 'center center'
+
+				// 同步尺寸
+				visible.width = buffer.width
+				visible.height = buffer.height
+
+				// 计算DPR恢复CSS尺寸
+				const dpr = Math.min(window.devicePixelRatio || 1, 2)
+				visible.style.width = (buffer.width / dpr) + 'px'
+				visible.style.height = (buffer.height / dpr) + 'px'
+
+				// 复制内容
+				const ctx = visible.getContext('2d')
+				ctx.setTransform(1, 0, 0, 1, 0, 0)
+				ctx.clearRect(0, 0, visible.width, visible.height)
+				ctx.drawImage(buffer, 0, 0)
+			},
+
+			setupTouch() {
+				const container = document.getElementById('pdfCanvasContainer')
+				if (!container || container._touchSetup) return
+				container._touchSetup = true
+
 				const self = this
-				canvas.addEventListener('touchstart', function(e) {
-					touchStartX = e.touches[0].clientX
-				}, { passive: true })
-				
-				canvas.addEventListener('touchend', function(e) {
-					const endX = e.changedTouches[0].clientX
-					const diff = touchStartX - endX
-					if (Math.abs(diff) > 50) {
-						if (diff > 0) {
-							self.nextPage_Swipe()
+				let startX = 0
+				let startY = 0
+				let dragging = false
+				let dragDirection = ''
+				const SWIPE_THRESHOLD = 40
+
+				// 缩放状态
+				let scale = 1
+				let lastScale = 1
+				let lastX = 0
+				let lastY = 0
+				let isPinching = false
+				let pinchStartDist = 0
+				let pinchStartScale = 1
+				let pinchCenterX = 0
+				let pinchCenterY = 0
+				let lastTapTime = 0
+				let doubleTapTimer = null
+
+				function getPinchDistance(touches) {
+					const dx = touches[0].clientX - touches[1].clientX
+					const dy = touches[0].clientY - touches[1].clientY
+					return Math.sqrt(dx * dx + dy * dy)
+				}
+
+				function getPinchCenter(touches) {
+					return {
+						x: (touches[0].clientX + touches[1].clientX) / 2,
+						y: (touches[0].clientY + touches[1].clientY) / 2
+					}
+				}
+
+				function applyTransform() {
+					const canvas = document.getElementById('pdfRenderCanvas')
+					if (!canvas) return
+					canvas.style.transform = 'scale(' + scale + ') translate(' + lastX + 'px, ' + lastY + 'px)'
+					canvas.style.transformOrigin = 'center center'
+				}
+
+				container.addEventListener('touchstart', function(e) {
+					const t = e.touches[0]
+					startX = t.clientX
+					startY = t.clientY
+					dragging = false
+					dragDirection = ''
+
+					// 双指缩放
+					if (e.touches.length === 2) {
+						isPinching = true
+						pinchStartDist = getPinchDistance(e.touches)
+						pinchStartScale = scale
+						const center = getPinchCenter(e.touches)
+						pinchCenterX = center.x
+						pinchCenterY = center.y
+						return
+					}
+
+					// 双击缩放
+					const now = Date.now()
+					if (now - lastTapTime < 300) {
+						if (doubleTapTimer) clearTimeout(doubleTapTimer)
+						if (scale === 1) {
+							// 放大到2x
+							scale = 2
+							lastX = -(t.clientX - container.offsetWidth / 2) * 0.5
+							lastY = -(t.clientY - container.offsetHeight / 2) * 0.5
 						} else {
-							self.prevPage_Swipe()
+							// 还原
+							scale = 1
+							lastX = 0
+							lastY = 0
+						}
+						applyTransform()
+						lastTapTime = 0
+						return
+					}
+					lastTapTime = now
+				}, { passive: true })
+
+				container.addEventListener('touchmove', function(e) {
+					// 双指缩放处理
+					if (isPinching && e.touches.length === 2) {
+						e.preventDefault()
+						const dist = getPinchDistance(e.touches)
+						const newScale = Math.max(1, Math.min(5, pinchStartScale * (dist / pinchStartDist)))
+						const center = getPinchCenter(e.touches)
+						// 以手指中心为缩放点
+						lastX = (center.x - pinchCenterX) * 0
+						lastY = (center.y - pinchCenterY) * 0
+						scale = newScale
+						applyTransform()
+						return
+					}
+
+					if (scale > 1) {
+						// 放大状态下拖动平移
+						if (e.touches.length === 1) {
+							e.preventDefault()
+							const t = e.touches[0]
+							const diffX = t.clientX - startX
+							const diffY = t.clientY - startY
+							lastX += diffX
+							lastY += diffY
+							startX = t.clientX
+							startY = t.clientY
+							applyTransform()
+						}
+						return
+					}
+
+					if (!dragging) {
+						const t = e.touches[0]
+						const diffX = t.clientX - startX
+						const diffY = t.clientY - startY
+
+						if (Math.abs(diffX) > SWIPE_THRESHOLD && Math.abs(diffX) > Math.abs(diffY)) {
+							dragging = true
+							dragDirection = diffX > 0 ? 'right' : 'left'
+							self._startAnim(dragDirection)
+						}
+					} else {
+						const t = e.touches[0]
+						const diff = t.clientX - startX
+						container.style.transition = 'none'
+						if (dragDirection === 'left') {
+							const progress = Math.min(1, Math.abs(diff) / (container.offsetWidth || 300))
+							self._applyAnim(progress)
+						} else if (dragDirection === 'right') {
+							const progress = Math.min(1, Math.abs(diff) / (container.offsetWidth || 300))
+							self._applyAnim(progress)
 						}
 					}
+				}, { passive: false })
+
+				container.addEventListener('touchend', function(e) {
+					if (isPinching) {
+						isPinching = false
+						// 如果缩放回到1，重置位移
+						if (scale <= 1.01) {
+							scale = 1
+							lastX = 0
+							lastY = 0
+							applyTransform()
+						}
+						return
+					}
+
+					if (scale > 1) return
+
+					if (!dragging) return
+					dragging = false
+
+					const visible = document.getElementById('pdfRenderCanvas')
+					container.style.transition = 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease'
+
+					if (dragDirection === 'left' && self.currentPdfPage < self.totalPdfPages) {
+						container.style.transform = 'translateX(-100%)'
+						setTimeout(function() {
+							self.currentPdfPage++
+							visible.style.transition = 'none'
+							visible.style.transform = 'none'
+							visible.style.opacity = '1'
+							if (self._bufferCanvas && self._bufferedPage === self.currentPdfPage) {
+								self._swapBufferToVisible()
+							} else {
+								self.renderPageDirect(self.currentPdfPage)
+							}
+							if (self.currentPdfPage < self.totalPdfPages) {
+								self._preRenderNext(self.currentPdfPage + 1)
+							}
+							container.style.transition = 'none'
+							container.style.transform = 'translateX(0)'
+							if (pdfOwnerVm) {
+								pdfOwnerVm.callMethod('onPageChanged', { page: self.currentPdfPage })
+							}
+						}, 300)
+					} else if (dragDirection === 'right' && self.currentPdfPage > 1) {
+						container.style.transform = 'translateX(100%)'
+						setTimeout(function() {
+							self.currentPdfPage--
+							visible.style.transition = 'none'
+							visible.style.transform = 'none'
+							visible.style.opacity = '1'
+							self.renderPageDirect(self.currentPdfPage)
+							if (self.currentPdfPage > 1) {
+								self._preRenderNext(self.currentPdfPage - 1)
+							}
+							container.style.transition = 'none'
+							container.style.transform = 'translateX(0)'
+							if (pdfOwnerVm) {
+								pdfOwnerVm.callMethod('onPageChanged', { page: self.currentPdfPage })
+							}
+						}, 300)
+					} else {
+						visible.style.transition = 'transform 0.25s ease-out'
+						visible.style.transform = 'none'
+						visible.style.opacity = '1'
+						container.style.transform = 'translateX(0)'
+					}
 				}, { passive: true })
 			},
-			
-			nextPage_Swipe() {
-				if (this.currentPdfPage < this.totalPdfPages) {
-					this.currentPdfPage++
-					if (pdfOwnerVm) {
-						this.renderPage(this.currentPdfPage, pdfOwnerVm)
-						pdfOwnerVm.callMethod('onPageChanged', { page: this.currentPdfPage, direction: 'left' })
+
+			_startAnim(direction) {
+				const container = document.getElementById('pdfCanvasContainer')
+				const canvas = document.getElementById('pdfRenderCanvas')
+				if (!container || !canvas) return
+
+				this._animDir = direction
+				if (direction === 'left') {
+					// 预渲染下一页到缓冲已在 loadPDF/翻页时完成
+					canvas.style.transformOrigin = 'left center'
+				} else {
+					if (this.currentPdfPage > 1) {
+						this._preRenderNext(this.currentPdfPage - 1)
 					}
+					canvas.style.transformOrigin = 'right center'
 				}
 			},
-			
-			prevPage_Swipe() {
-				if (this.currentPdfPage > 1) {
-					this.currentPdfPage--
-					if (pdfOwnerVm) {
-						this.renderPage(this.currentPdfPage, pdfOwnerVm)
-						pdfOwnerVm.callMethod('onPageChanged', { page: this.currentPdfPage, direction: 'right' })
-					}
+
+			_applyAnim(progress) {
+				const canvas = document.getElementById('pdfRenderCanvas')
+				if (!canvas) return
+				const angle = progress * 180
+				const scale = 1 - progress * 0.04
+				if (this._animDir === 'left') {
+					canvas.style.transform = 'perspective(2000px) rotateY(' + (-angle) + 'deg) scaleX(' + scale + ')'
+					canvas.style.opacity = 1 - progress * 0.2
+				} else {
+					canvas.style.transform = 'perspective(2000px) rotateY(' + angle + 'deg) scaleX(' + scale + ')'
+					canvas.style.opacity = 1 - progress * 0.2
 				}
 			},
-			
+
 			loadPdfJs() {
 				return new Promise((resolve, reject) => {
 					const script = document.createElement('script')
@@ -1643,41 +1645,31 @@
 					document.head.appendChild(script)
 				})
 			},
-			
-			async renderPage(pageNum, ownerVm) {
-				const canvas = document.getElementById('pdfRenderCanvas')
-				if (!canvas || !this.pdfDoc) return
-				
-				const page = await this.pdfDoc.getPage(pageNum)
-				const dpr = window.devicePixelRatio || 1
-				const rect = canvas.parentElement.getBoundingClientRect()
-				const viewport = page.getViewport({ scale: 1 })
-				const scale = Math.min(rect.width / viewport.width, rect.height / viewport.height)
-				const scaledViewport = page.getViewport({ scale: scale * dpr })
-				
-				canvas.width = scaledViewport.width
-				canvas.height = scaledViewport.height
-				canvas.style.width = (scaledViewport.width / dpr) + 'px'
-				canvas.style.height = (scaledViewport.height / dpr) + 'px'
-				
-				const ctx = canvas.getContext('2d')
-				ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-				
-				await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: scale }) }).promise
-				ownerVm.callMethod('onPageChanged', { page: pageNum })
+
+			renderPage(pageNum, ownerVm) {
+				this.renderPageDirect(pageNum)
+				if (ownerVm) ownerVm.callMethod('onPageChanged', { page: pageNum })
 			},
-			
+
 			nextPage(ownerVm) {
 				if (this.currentPdfPage < this.totalPdfPages) {
 					this.currentPdfPage++
-					this.renderPage(this.currentPdfPage, ownerVm)
+					this.renderPageDirect(this.currentPdfPage)
+					if (this.currentPdfPage < this.totalPdfPages) {
+						this._preRenderNext(this.currentPdfPage + 1)
+					}
+					if (ownerVm) ownerVm.callMethod('onPageChanged', { page: this.currentPdfPage })
 				}
 			},
-			
+
 			prevPage(ownerVm) {
 				if (this.currentPdfPage > 1) {
 					this.currentPdfPage--
-					this.renderPage(this.currentPdfPage, ownerVm)
+					this.renderPageDirect(this.currentPdfPage)
+					if (this.currentPdfPage > 1) {
+						this._preRenderNext(this.currentPdfPage - 1)
+					}
+					if (ownerVm) ownerVm.callMethod('onPageChanged', { page: this.currentPdfPage })
 				}
 			}
 		}
@@ -1686,7 +1678,6 @@
 	let pdfDoc = null
 let currentPdfPage = 1
 let totalPdfPages = 0
-let touchStartX = 0
 let pdfOwnerVm = null
 
 function arrayBufferToBase64(buffer) {
@@ -1708,7 +1699,11 @@ function arrayBufferToBase64(buffer) {
 	
 	.container {
 		min-height: 100vh;
-		background: #fff;
+		background: var(--theme-bg);
+		background-image: var(--theme-bg-image);
+		background-size: var(--theme-bg-image-size);
+		background-position: var(--theme-bg-image-position);
+		background-repeat: no-repeat;
 		display: flex;
 		flex-direction: column;
 		padding-bottom: 120rpx;
@@ -1717,6 +1712,12 @@ function arrayBufferToBase64(buffer) {
 		--theme-secondary: #60A5FA;
 		--theme-accent: #93C5FD;
 		--theme-bg: #F0F9FF;
+		--theme-text: #1a1a1a;
+		--theme-card: rgba(255, 255, 255, 0.85);
+		--theme-border: rgba(0, 0, 0, 0.06);
+		--theme-bg-image: none;
+		--theme-bg-image-size: cover;
+		--theme-bg-image-position: center center;
 		
 		&.sheet-expanded {
 			padding-bottom: 400rpx;
@@ -1733,7 +1734,11 @@ function arrayBufferToBase64(buffer) {
 		}
 		
 		&.reading-mode {
-			background: #fff;
+			background: var(--theme-bg);
+			background-image: var(--theme-bg-image);
+			background-size: var(--theme-bg-image-size);
+			background-position: var(--theme-bg-image-position);
+			background-repeat: no-repeat;
 			padding-bottom: 0;
 			
 			.main-content {
@@ -1748,9 +1753,9 @@ function arrayBufferToBase64(buffer) {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		background: rgba(255, 255, 255, 0.85);
+		background: var(--theme-card);
 		backdrop-filter: blur(20px);
-		border-bottom: 1rpx solid rgba(0, 0, 0, 0.04);
+		border-bottom: 1rpx solid var(--theme-border);
 	}
 	
 	.header-left {
@@ -1769,7 +1774,8 @@ function arrayBufferToBase64(buffer) {
 	
 	.subtitle {
 		font-size: 24rpx;
-		color: #999;
+		color: var(--theme-text);
+		opacity: 0.6;
 		margin-top: 4rpx;
 	}
 	
@@ -1810,39 +1816,50 @@ function arrayBufferToBase64(buffer) {
 		flex-direction: column;
 		position: relative;
 		width: 100%;
-		height: 100%;
-		min-height: 100vh;
+		height: 100vh;
+		overflow: hidden;
+		background: #2c2c2c;
 	}
-	
+
 	.pdf-canvas-wrapper {
 		flex: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		overflow: hidden;
+		position: relative;
 		background: linear-gradient(135deg, #525659 0%, #3a3d40 100%);
-		transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
-		
-		&.page-turning {
-			&.turn-left {
-				transform: translateX(-40rpx) scaleX(0.95);
-				opacity: 0.4;
-			}
-			&.turn-right {
-				transform: translateX(40rpx) scaleX(0.95);
-				opacity: 0.4;
-			}
-		}
+		perspective: 2000rpx;
 	}
-	
-	.pdf-canvas-wrapper canvas {
+
+	.pdf-page {
+		position: absolute;
 		max-width: 100%;
 		max-height: 100%;
 		object-fit: contain;
-		transition: opacity 0.3s ease;
-		box-shadow: 0 4rpx 32rpx rgba(0, 0, 0, 0.6), 
-		            3rpx 0 12rpx rgba(0, 0, 0, 0.3);
+		transform-origin: left center;
+		transition: transform 0.15s ease-out;
+		box-shadow: 0 4rpx 32rpx rgba(0, 0, 0, 0.6), 3rpx 0 12rpx rgba(0, 0, 0, 0.3);
 		border-radius: 4rpx;
+		background: #fff;
+	}
+
+	.pdf-page-current {
+		z-index: 10;
+		transform-origin: left center;
+	}
+
+	.pdf-page-next {
+		z-index: 5;
+	}
+
+	.page-curl-shadow {
+		position: absolute;
+		z-index: 15;
+		pointer-events: none;
+		background: linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.4) 100%);
+		opacity: 0;
+		transition: opacity 0.15s ease;
 	}
 	
 	.pdf-loading-overlay {
@@ -1994,7 +2011,7 @@ function arrayBufferToBase64(buffer) {
 	
 	.empty-card {
 		position: relative;
-		background: rgba(255, 255, 255, 0.95);
+		background: var(--theme-card);
 		backdrop-filter: blur(20px);
 		border-radius: 40rpx;
 		padding: 64rpx 48rpx;
@@ -2002,7 +2019,7 @@ function arrayBufferToBase64(buffer) {
 		flex-direction: column;
 		align-items: center;
 		box-shadow: 0 24rpx 80rpx rgba(59, 130, 246, 0.15);
-		border: 1rpx solid rgba(255, 255, 255, 0.8);
+		border: 1rpx solid var(--theme-border);
 	}
 	
 	.empty-icon-wrapper {
@@ -2032,13 +2049,15 @@ function arrayBufferToBase64(buffer) {
 	
 	.empty-subtitle {
 		font-size: 28rpx;
-		color: #999;
+		color: var(--theme-text);
+		opacity: 0.5;
 		margin-bottom: 32rpx;
 	}
 	
 	.empty-desc {
 		font-size: 28rpx;
-		color: #666;
+		color: var(--theme-text);
+		opacity: 0.7;
 		text-align: center;
 		margin-bottom: 48rpx;
 		line-height: 1.8;
@@ -2079,12 +2098,13 @@ function arrayBufferToBase64(buffer) {
 	}
 	
 	.score-card {
-		background: rgba(255, 255, 255, 0.9);
+		background: var(--theme-card);
 		border-radius: 20rpx;
 		padding: 32rpx;
 		display: flex;
 		align-items: center;
 		box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+		border: 1rpx solid var(--theme-border);
 		transition: all 0.25s ease;
 		
 		&:active {
@@ -2118,12 +2138,13 @@ function arrayBufferToBase64(buffer) {
 	.score-name {
 		font-size: 30rpx;
 		font-weight: 600;
-		color: #333;
+		color: var(--theme-text);
 	}
 	
 	.score-date {
 		font-size: 24rpx;
-		color: #999;
+		color: var(--theme-text);
+		opacity: 0.5;
 	}
 	
 	.score-arrow {
@@ -2151,12 +2172,12 @@ function arrayBufferToBase64(buffer) {
 	.section-title {
 		font-size: 36rpx;
 		font-weight: 700;
-		color: #1a1a2e;
+		color: var(--theme-text);
 	}
 	
 	.settings-list {
 		flex: 1;
-		background: rgba(255, 255, 255, 0.8);
+		background: var(--theme-card);
 		border-radius: 24rpx;
 		overflow: hidden;
 	}
@@ -2165,7 +2186,7 @@ function arrayBufferToBase64(buffer) {
 		display: flex;
 		align-items: center;
 		padding: 32rpx 24rpx;
-		border-bottom: 1rpx solid rgba(0, 0, 0, 0.04);
+		border-bottom: 1rpx solid var(--theme-border);
 		
 		&:last-child {
 			border-bottom: none;
@@ -2178,21 +2199,29 @@ function arrayBufferToBase64(buffer) {
 	}
 	
 	.setting-label {
+		color: var(--theme-text);
 		flex: 1;
 		font-size: 30rpx;
-		color: #333;
 		font-weight: 500;
+	}
+	
+	.setting-value {
+		font-size: 26rpx;
+		color: var(--theme-text);
+		opacity: 0.5;
 	}
 	
 	.setting-arrow {
 		font-size: 36rpx;
-		color: #ccc;
+		color: var(--theme-text);
+		opacity: 0.3;
 		font-weight: 300;
 	}
 	
 	.setting-version {
 		font-size: 26rpx;
-		color: #999;
+		color: var(--theme-text);
+		opacity: 0.5;
 	}
 	
 	.theme-selector {

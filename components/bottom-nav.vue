@@ -1,5 +1,5 @@
 <template>
-	<view class="bottom-nav" :style="navStyle">
+	<view class="bottom-nav" :style="navStyle" :class="{ 'dark-mode': isDarkMode }">
 		<view 
 			v-for="item in navItems" 
 			:key="item.key"
@@ -25,6 +25,10 @@
 				default: 'library'
 			},
 			isPlaying: {
+				type: Boolean,
+				default: false
+			},
+			isDarkMode: {
 				type: Boolean,
 				default: false
 			},
@@ -78,6 +82,19 @@
 		z-index: 500;
 		--theme-primary: #3B82F6;
 		--theme-secondary: #60A5FA;
+		
+		&.dark-mode {
+			background: rgba(30, 30, 42, 0.95);
+			box-shadow: 0 -4rpx 30rpx rgba(0, 0, 0, 0.3);
+			
+			.nav-icon {
+				color: #8a8a9a;
+			}
+			
+			.nav-label {
+				color: #8a8a9a;
+			}
+		}
 	}
 	
 	.nav-item {

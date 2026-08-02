@@ -222,17 +222,17 @@ export default {
 	&.floating {
 		position: fixed;
 		z-index: 999;
-		top: 10%;
+		top: 5%;
 		right: 0;
 		bottom: auto;
 		left: auto;
 		width: 60rpx;
-		height: 400rpx;
+		height: 720rpx;
 		transform: translateY(0);
 		transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-		border-radius: 16rpx 0 0 16rpx;
+		border-radius: 20rpx 0 0 20rpx;
 		box-shadow: -4rpx 0 20rpx rgba(0, 0, 0, 0.1);
-		background: rgba(255, 255, 255, 0.85);
+		background: rgba(255, 255, 255, 0.92);
 		backdrop-filter: blur(10px);
 		cursor: pointer;
 		
@@ -240,7 +240,7 @@ export default {
 			width: 60rpx;
 			border-radius: 20rpx 0 0 20rpx;
 			box-shadow: -6rpx 0 30rpx rgba(0, 0, 0, 0.15);
-			background: rgba(255, 255, 255, 0.9);
+			background: rgba(255, 255, 255, 0.95);
 			
 			&:active {
 				background: rgba(255, 255, 255, 0.6);
@@ -249,7 +249,8 @@ export default {
 		}
 		
 		&:not(.collapsed) {
-			width: 280rpx;
+			width: 380rpx;
+			box-shadow: -8rpx 0 40rpx rgba(0, 0, 0, 0.15);
 		}
 	}
 }
@@ -522,8 +523,8 @@ export default {
 }
 
 .beat-dot {
-	width: 44rpx;
-	height: 44rpx;
+	width: 56rpx;
+	height: 56rpx;
 	background: linear-gradient(135deg, #e8ecf0, #d1d5db);
 	border-radius: 50%;
 	transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -533,12 +534,12 @@ export default {
 	&.active {
 		background: linear-gradient(135deg, #22c55e, #16a34a);
 		transform: scale(1.5);
-		box-shadow: 0 0 24rpx rgba(34, 197, 94, 0.8), 0 0 48rpx rgba(34, 197, 94, 0.4), inset 0 -2rpx 4rpx rgba(0, 0, 0, 0.1);
+		box-shadow: 0 0 28rpx rgba(34, 197, 94, 0.8), 0 0 56rpx rgba(34, 197, 94, 0.4), inset 0 -2rpx 4rpx rgba(0, 0, 0, 0.1);
 	}
 	
 	&:first-child.active {
 		background: linear-gradient(135deg, var(--theme-primary), var(--theme-secondary));
-		box-shadow: 0 0 24rpx rgba(59, 130, 246, 0.8), 0 0 48rpx rgba(59, 130, 246, 0.4), inset 0 -2rpx 4rpx rgba(0, 0, 0, 0.1);
+		box-shadow: 0 0 28rpx rgba(59, 130, 246, 0.8), 0 0 56rpx rgba(59, 130, 246, 0.4), inset 0 -2rpx 4rpx rgba(0, 0, 0, 0.1);
 	}
 }
 
